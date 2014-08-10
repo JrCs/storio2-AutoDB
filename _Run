@@ -1,0 +1,516 @@
+#!/bin/sh
+ver=0.2
+pidfile="/vp_mnt/if/hijack.pid"
+
+#Safe Mode
+#for i in 1 2 3 4 5
+#do 
+	key_status=`keystatus -w`
+	if expr "$key_status" : '.*HLP;' > /dev/null ; then
+		echo "Help button pressed: Safe Mode activated: Do nothing."
+		rm -f $pidfile
+		exit 0
+	fi
+	if expr "$key_status" : '.*SHT;' > /dev/null ; then
+		force_update=1
+		echo "Camera button pressed: Force update activated."
+	fi
+#	sleep 0.1
+#done
+
+#what are we running ?
+#_self="${0##*/}"
+if [ "$1" == "silent" ]; then
+	echo "Running Hijack in silent mode"
+	ToolMode=0
+else
+	echo "Running normal tool"
+	ToolMode=1
+fi
+
+echo "waiting for SD to be mounted."
+while [ ! -d /vp_mnt/sd ]; do sleep 0.1; done		#wait until /vp_mnt/sd is mounted
+echo "SD mounted."
+
+if [ $ToolMode -ne 0 ]; then
+	killall -9 appswitch
+	killall -9 desktopManager
+	killall -9 flashplayer
+	mkfifo /testfifo
+	lcdterm -daemon /testfifo 
+	#Path of app is `ln -s` in /vp_mnt/app
+	sqlite="/vp_mnt/app/sqlite3"
+	myself="$0" #/vp_mnt/app/_Run"
+else
+	sqlite="/vp_mnt/if/sqlite3"
+fi
+
+sqlite_version="`$sqlite -version`"
+dbpath="/vp_mnt/sd/LLN/Innopad_sd.db"
+cartspath="/vp_mnt/sd/LLN/APPS/CARTS"
+gamespath="/vp_mnt/sd/LLN/APPS/GAMES"
+hijackfile="/vp_mnt/if/.__hijack__before__Bundle__"
+hijackpgrm="/vp_mnt/if/.hijack"
+hjlog="/vp_mnt/sd/hj.log"
+ifpath="/vp_mnt/if"
+updatefolder="/vp_mnt/sd/AutoDB"
+
+if [ -z "$sqlite_version" ]; then
+	warning="sqlite not found. I can not work :("
+fi
+
+msg(){
+	if [ $ToolMode -ne 0 ]; then 
+		echo "$1" >/testfifo
+	else 
+		echo "$1"
+	fi
+}
+
+listcarts(){
+	missing=0
+	present=0
+	missing2=0
+	present2=0
+	 if [ "$(ls -A $cartspath/*.bin)" ]; then
+        for file in $cartspath/*.bin
+        do
+            TARGET_PATH=$(readlink -f "$file")
+            FILE_NAME=${file##*/}
+        	JUST_NAME=${FILE_NAME%.bin}
+        	
+			sql="SELECT pKey FROM Games_info WHERE filename='$file'"
+			Cart_id="`$sqlite $dbpath \"$sql\"`"
+			if [ -f $cartspath/$JUST_NAME.txt ]; then
+				title="`cat $cartspath/$JUST_NAME.txt | head -1`"
+			else
+				title=$JUST_NAME
+			fi	
+			if [ -z "$Cart_id" ]; then
+				echo "Missing CART: $title" >/testfifo
+				missing=$(($missing + 1))
+			else
+				echo "Present CART[$Cart_id]: $title" >/testfifo
+				present=$(($present + 1))
+			fi
+		done
+    else
+        echo "No CARTS found" >/testfifo
+    fi
+	if [ "$(ls -dA $gamespath/*/)" ]; then
+		msg "FOUND Directory games"
+        for file in  $gamespath/*/
+        do
+            FILE_NAME=${file##*/}
+			FILE_PATH=${file%/*}
+			sql="SELECT pKey FROM Games_info WHERE filename='$FILE_PATH'"
+			Cart_id="`$sqlite $dbpath \"$sql\"`"
+			if [ -f $cartspath/$JUST_NAME.txt ]; then
+				title="`cat $cartspath/$JUST_NAME.txt | head -1`"
+			else
+				title=$JUST_NAME
+			fi	
+			if [ -z "$Cart_id" ]; then
+				echo "Missing folder Game: $title" >/testfifo
+				missing2=$(($missing2 + 1))
+			else
+				echo "Present Folder[$Cart_id]: $title" >/testfifo
+				present2=$(($present2 + 1))
+			fi
+        done
+		msg "Done for Game Folder"	
+	else
+    	msg "No Game Folder found"  
+    fi
+	echo "Found $present present and $missing missing CART in db." >/testfifo
+	echo "Found $present2 present and $missing2 missing folder game in db." >/testfifo
+	echo "Returning to menu..." >/testfifo
+    sleep 10
+    showmenu
+}
+
+checkinstall(){
+	if [ -f $hijackfile -a -f $hijackpgrm ]; then
+		sql_ver="`$ifpath/sqlite3 -version`"
+		if [ -z "$sql_ver" ]; then
+			hijack_status="Hijack installed, but sqlite not working :("
+		else
+			hj_ve="`cat $hijackpgrm | head -2 | tail -1`"			
+			hj_ve="${hj_ve/ver=/}"
+			hijack_status="Hijack installed (version = $hj_ve)"
+		fi
+	else
+		hijack_status="Hijack NOT installed :("
+		hj_ve=""
+	fi
+}
+checkupdate(){
+	if [ -d $updatefolder -a -n "hj_ve" ]; then
+		up_ve="`cat $updatefolder/_Run | head -2 | tail -1`"			
+		up_ve="${up_ve/ver=/}"
+		upv="${up_ve/./}"
+		cuv="${ver/./}"
+		if [ $upv -gt $cuv ]; then
+			update_status="Update available (version = $up_ve)"
+		else
+			update_status="" #Last version already installed"
+		fi
+	else
+		update_status="" #no update available"
+	fi
+}
+
+install_hijack(){
+	if [ -d $ifpath ]; then
+		if [ -z "$up_ve" ]; then
+			echo "Installing Hijack from running folder"
+			cp -f _Run $hijackpgrm
+			cp -f hjlauncher $hijackfile
+			cp -f $sqlite $ifpath/sqlite3
+			cp -f /vp_mnt/app/icon.ico $ifpath/icon.ico
+			ln -sf $hijackpgrm $ifpath/_Run
+		else
+			echo "Installing Hijack from update folder"
+			cp -f $updatefolder/_Run $hijackpgrm
+			cp -f $updatefolder/hjlauncher $hijackfile
+			cp -f $updatefolder/sqlite3 $ifpath/sqlite3
+		fi
+		echo "Done"
+		echo "Hijack instaled" >/testfifo
+	fi
+	sleep 3
+	checkinstall
+	checkupdate
+    showmenu
+}
+uninstall_hijack(){
+	if [ -d $ifpath ]; then
+		rm -f $hijackfile
+		rm -f $hijackpgrm
+		rm -f $ifpath/sqlite3
+		rm -f $ifpath/icon.ico
+		rm -f $ifpath/_Run
+		
+		sql="SELECT pKey FROM Other_info WHERE filename='$ifpath'"
+		_id="`$sqlite $dbpath \"$sql\"`"
+		if [ -n "$_id" ]; then
+			sql="DELETE * FROM Other_info WHERE filename='$ifpath'"
+			$sqlite $dbpath "$sql"
+		fi
+
+		echo "Hijack removed" >/testfifo
+	fi
+	sleep 3
+	checkinstall
+	checkupdate
+    showmenu
+}
+addMyself2DB(){
+	sql="SELECT pKey FROM Other_info WHERE filename='$ifpath'"
+	_id="`$sqlite $dbpath \"$sql\"`"
+
+	if [ -z "$_id" ]; then
+		if [ -f $ifpath/icon.ico ]; then
+			icon="`hexdump -ve '1/1 \"%.2x\"' $ifpath/icon.ico`"
+		fi
+		sql="INSERT INTO Other_info (filename,type,title,curriculum,thumbnail) VALUES ('$ifpath',0,'AutoDB Mod','Tools',X'$icon')"
+		$sqlite $dbpath "$sql"
+		echo "Hijack tool added to DB"
+	else
+		echo "Hijack already in DB"
+	fi
+}
+checkDBEntry(){
+	local gamepath="$1"
+	local gamename="$2"
+	local gamefile="$3"
+	
+	if [ -n "$gamefile" ]; then
+		gamepathfull="$gamepath/$gamefile" 	#got a .bin file
+	elif [ -f "$gamepath/_Run" ]; then
+		gamepathfull="$gamepath"			#got a runnable folder
+	else
+		gamepathfull=""						#nothing suitable
+	fi
+
+	if [ -n "$gamepathfull" ]; then
+		sql="SELECT pKey FROM Games_info WHERE filename='$gamepathfull'"
+		Game_id="`$sqlite $dbpath \"$sql\"`"
+		
+		infofile="$gamename.txt"
+		if [ ! -f "$gamepath/$infofile" -a -z "$gamefile" ]; then 
+			#just get first existing txt fileif we are in a folder
+			for file in $gamepath/*.txt
+			do
+				infofile=${file##*/}
+				break
+			done
+		fi
+		if [ -f "$gamepath/$infofile" ]; then
+			title="`cat \"$gamepath/$infofile\" | head -1`"
+			curriculum="`cat \"$gamepath/$infofile\" | head -2 | tail -1`"
+		else
+			title="${gamename//_/ }"
+			curriculum=""
+		fi
+		#escape ' to '' for sqlite
+		title_="${title//\'/''}"			
+		curriculum="${curriculum//\'/''}"
+		iconfile="$gamename.ico"
+		if [ ! -f "$gamepath/$iconfile" -a -z "$gamefile" ]; then
+			#just get first existing ico fileif we are in a folder
+			for file in "$gamepath"/*.ico
+			do
+				iconfile=${file##*/}
+				break
+			done
+		fi
+		if [ -f "$gamepath/$iconfile" ]; then
+			#We found a ico, test if we need to add/update it
+			sql="SELECT pKey FROM Games_info WHERE pKey='$Game_id' AND thumbnail is NULL"
+			ico_empty="`$sqlite $dbpath \"$sql\"`"
+			if [ -n "$ico_empty" -o -n "$force_update" -o -z "$Game_id" ]; then
+				icon="`hexdump -ve '1/1 \"%.2x\"' \"$gamepath/$iconfile\"`"
+				addon=", with icon"
+			else
+				icon=""
+				addon="" #, already have ico"
+			fi
+		else
+			icon=""
+			addon="" #, no ico"
+		fi			
+		#msg "Found Game: $title"
+		#msg "$title_ - $curriculum"
+		#msg "Game id: $Game_id"
+		if [ -z "$Game_id" ]; then
+			#Game not in db -> add
+			if [ -z "$icon" ]; then
+				sql="INSERT INTO Games_info (filename,type,title,curriculum) VALUES ('$gamepathfull',0,'$title_','$curriculum')"
+			else
+				sql="INSERT INTO Games_info (filename,type,title,curriculum,thumbnail) VALUES ('$gamepathfull',0,'$title_','$curriculum',X'$icon')"
+			fi
+			msg "Adding new Game: $title $addon"
+		else
+			#Game in db -> update
+			if [ -z "$icon" ]; then
+				sql="UPDATE Games_info SET title='$title_', curriculum='$curriculum' WHERE pKey=$Game_id"
+			else
+				sql="UPDATE Games_info SET title='$title_', curriculum='$curriculum', thumbnail=X'$icon' WHERE pKey=$Game_id"
+			fi
+			msg "Updating Game [$Game_id]: $title $addon"
+		fi
+		#msg "sql: $sql"
+		$sqlite $dbpath "$sql"
+	fi
+}
+
+removeoldgames() {
+	local sql='SELECT pKey,filename FROM Games_info'
+    local pkey
+    local filepath
+    "$sqlite" "$dbpath" "$sql" | while IFS='|' read pkey filepath; do
+        if [ ! -e "$filepath" ]; then
+	        local filename="${filepath##*/}"
+	        msg "Removing nonexistent game [$pkey] $filename"
+            sql="DELETE FROM Games_info WHERE pKey='$pkey'"
+            "$sqlite" "$dbpath" "$sql"
+            sleep 0.3
+	    fi
+	done
+}
+
+sortgames() {
+    local tmpfile="/vp_mnt/sd/games.dump"
+    rm -f "$tmpfile"
+    msg "Sorting games by title..."
+    local pkey
+    local filename
+    local title
+    "$sqlite" "$dbpath" "SELECT pKey,filename,title FROM Games_info" | \
+     while IFS='|' read pkey filename title; do
+        echo "$pkey|$filename|$title" >>"$tmpfile"
+    done
+    local index=1001
+    sort -t'|' -f -k 3 "$tmpfile" | while IFS='|' read pkey filename title; do
+        local sql="UPDATE Games_info SET pkey=$index WHERE pkey='$pkey' and filename='$filename'"
+        "$sqlite" "$dbpath" "$sql"
+        index=$(expr $index + 1)
+    done
+    "$sqlite" "$dbpath" 'SELECT pKey,filename,title FROM Games_info' | \
+     while IFS='|' read pkey filename title; do
+        local new_pkey=$(expr $pkey - 1000)
+        local sql="UPDATE Games_info SET pkey=$new_pkey WHERE pkey='$pkey' and filename='$filename'"
+        "$sqlite" "$dbpath" "$sql"
+     done
+     rm -f "$tmpfile"
+}
+
+checkgames(){
+    if [ "$(ls -A $cartspath/*.bin)" ]; then
+		msg "FOUND CARTS on SD"
+        for file in $cartspath/*.bin
+        do
+            FILE_NAME="${file##*/}"
+			FILE_PATH="${file%/*}"
+        	JUST_NAME="${FILE_NAME%.bin}"
+			checkDBEntry "$FILE_PATH" "$JUST_NAME" "$FILE_NAME"
+        done
+		msg "Done for Carts"
+        sleep 3
+	else
+    	msg "No CARTS found"  
+    fi
+	if [ "$(ls -dA $gamespath/*/)" ]; then
+		msg "FOUND Directory games"
+        for file in  $gamespath/*/
+        do
+            FILE_NAME="${file##*/}"
+			FILE_PATH="${file%/*}"
+        	JUST_NAME="${FILE_PATH##*/}"
+			checkDBEntry "$FILE_PATH" "$JUST_NAME" "$FILE_NAME"
+        done
+		msg "Done for Game Folder"
+        sleep 3
+	else
+    	msg "No Game Folder found"  
+    fi
+
+    sortgames
+
+	if [ $ToolMode -ne 0 ]; then
+		echo "Returning to menu..." >/testfifo
+		sleep 1
+		showmenu
+	fi
+}
+
+showmenu(){
+    echo "-----------------------------------------------------------">/testfifo
+    echo "---------- Welcome to AutoDB Mod test by yoshi ------------" >/testfifo
+    echo "-------------------- Update by JrCs -----------------------" >/testfifo
+    echo "---------------------- Version $ver ------------------------" >/testfifo
+    echo "-----------------------------------------------------------">/testfifo
+    sleep 1
+    echo "">/testfifo
+    echo "Please choose an option">/testfifo
+    echo "">/testfifo
+    echo "Vol Up    : Uninstall Hijack">/testfifo
+    echo "Vol Down  : Checking games (listing only)">/testfifo
+    echo "Help      : Update Games in Database">/testfifo
+    echo "Camera    : Install Hijack (autorun mode)">/testfifo
+    echo "Home      : Exit">/testfifo
+    echo "Bright Up : Shut Down">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "sqlite version: $sqlite_version $warning">/testfifo
+    echo "$hijack_status">/testfifo
+    echo "$update_status">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    
+    getbuttoninput
+    
+    if [ "$button_pressed" == 'VDN' ]; then
+        listcarts
+    elif [ "$button_pressed" == 'VUP' ]; then
+		uninstall_hijack
+    elif [ "$button_pressed" == 'HOM' ]; then
+        rebootdash
+    elif [ "$button_pressed" == 'SHT' ]; then
+        install_hijack
+    elif [ "$button_pressed" == 'BRI' ]; then
+        echo "">/testfifo
+        echo "SHUT DOWN">/testfifo
+        sleep 2
+ 		rm -f $pidfile
+        reboot
+    elif [ "$button_pressed" == 'HLP' ]; then
+        removeoldgames
+        checkgames
+    else
+        showmenu
+    fi
+}
+
+clearfifoscreen(){
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+    echo "">/testfifo
+}
+getbuttoninput(){
+    button_pressed=''
+    while :
+    do
+    	key_status=`keystatus -w`
+        if expr "$key_status" : '.*VUP;' > /dev/null ; then
+        	button_pressed="VUP"
+            break
+        fi
+        if expr "$key_status" : '.*VDN;' > /dev/null ; then
+        	button_pressed="VDN"
+            break
+        fi
+        if expr "$key_status" : '.*HOM;' > /dev/null ; then
+        	button_pressed="HOM"
+            break
+        fi
+        if expr "$key_status" : '.*HLP;' > /dev/null ; then
+        	button_pressed="HLP"
+            break
+        fi
+        if expr "$key_status" : '.*BRI;' > /dev/null ; then
+        	button_pressed="BRI"
+            break
+        fi
+        if expr "$key_status" : '.*SHT;' > /dev/null ; then
+        	button_pressed="SHT"
+            break
+        fi
+    done
+}
+
+
+rebootdash(){
+    echo "Restarting...." >/testfifo
+    sleep 2
+	rm -f $pidfile
+    DM_ADCREF=
+    if [ "$mainunit_ver" != "2011" ]; then
+    	DM_ADCREF="-adcref=464,476,316,324,291,298"
+    fi
+    desktopManager -autodim $AUTO_POWER_OFF_TIME -RunBundle $DM_ADCREF &
+}
+
+
+if [ $ToolMode -ne 0 ]; then
+	checkinstall
+	checkupdate
+	showmenu
+else
+	addMyself2DB
+	checkgames
+fi
+
+echo "Removing PID file"
+while [ -f $pidfile ]; do
+	rm -f $pidfile
+	sleep 0.1
+done

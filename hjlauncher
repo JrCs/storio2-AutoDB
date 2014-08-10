@@ -1,0 +1,31 @@
+#!/bin/sh
+ver=0.1
+echo "Starting HiJack."
+hj="/vp_mnt/if/.hijack silent"
+pidfile="/vp_mnt/if/hijack.pid"
+
+#Safe check
+#if pid exist it mean that last Hijack run did not end correctly
+#so we will not run again.
+if [ ! -f $pidfile ]; then 
+	#exec_newpgid $hj &
+	$hj &
+	PID=$!
+	echo $PID>>$pidfile
+
+	#wait until /var/run/hijack.pid is removed (end of pgrm)
+	timeout=0
+	while [ -f $pidfile ]; do
+		if [ $timeout -ge 20 ]; then break; fi
+		timeout=$(($timeout + 1))
+		sleep 1
+	done
+	if [ -f $pidfile ]; then
+		echo "Hijack execution timed out, continuing anyway!"
+	else
+		echo "Hijack succeed!"
+	fi
+else
+	echo "Hijack pid already exist, abording."
+fi
+
