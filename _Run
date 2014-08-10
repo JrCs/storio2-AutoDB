@@ -224,6 +224,7 @@ checkDBEntry(){
 	local gamepath="$1"
 	local gamename="$2"
 	local gamefile="$3"
+	local result=0
 	
 	if [ -n "$gamefile" ]; then
 		gamepathfull="$gamepath/$gamefile" 	#got a .bin file
@@ -291,6 +292,7 @@ checkDBEntry(){
 				sql="INSERT INTO Games_info (filename,type,title,curriculum,thumbnail) VALUES ('$gamepathfull',0,'$title_','$curriculum',X'$icon')"
 			fi
 			msg "Adding new Game: $title $addon"
+			result=1
 		else
 			#Game in db -> update
 			if [ -z "$icon" ]; then
@@ -303,6 +305,7 @@ checkDBEntry(){
 		#msg "sql: $sql"
 		$sqlite $dbpath "$sql"
 	fi
+	return $result
 }
 
 removeoldgames() {
@@ -347,6 +350,7 @@ sortgames() {
 }
 
 checkgames(){
+    local new_games=0
     if [ "$(ls -A $cartspath/*.bin)" ]; then
 		msg "FOUND CARTS on SD"
         for file in $cartspath/*.bin
@@ -355,6 +359,7 @@ checkgames(){
 			FILE_PATH="${file%/*}"
         	JUST_NAME="${FILE_NAME%.bin}"
 			checkDBEntry "$FILE_PATH" "$JUST_NAME" "$FILE_NAME"
+			new_games=$(expr $new_games + $?)
         done
 		msg "Done for Carts"
         sleep 3
@@ -369,6 +374,7 @@ checkgames(){
 			FILE_PATH="${file%/*}"
         	JUST_NAME="${FILE_PATH##*/}"
 			checkDBEntry "$FILE_PATH" "$JUST_NAME" "$FILE_NAME"
+			new_games=$(expr $new_games + $?)
         done
 		msg "Done for Game Folder"
         sleep 3
@@ -376,7 +382,7 @@ checkgames(){
     	msg "No Game Folder found"  
     fi
 
-    sortgames
+    [ "$new_games" -gt 0 ] && sortgames
 
 	if [ $ToolMode -ne 0 ]; then
 		echo "Returning to menu..." >/testfifo
@@ -391,36 +397,37 @@ showmenu(){
     echo "-------------------- Update by JrCs -----------------------" >/testfifo
     echo "---------------------- Version $ver ------------------------" >/testfifo
     echo "-----------------------------------------------------------">/testfifo
-    sleep 1
     echo "">/testfifo
     echo "Please choose an option">/testfifo
     echo "">/testfifo
-    echo "Vol Up    : Uninstall Hijack">/testfifo
+    #echo "Vol Up    : Uninstall Hijack">/testfifo
     echo "Vol Down  : Checking games (listing only)">/testfifo
     echo "Help      : Update Games in Database">/testfifo
-    echo "Camera    : Install Hijack (autorun mode)">/testfifo
+    #echo "Camera    : Install Hijack (autorun mode)">/testfifo
     echo "Home      : Exit">/testfifo
     echo "Bright Up : Shut Down">/testfifo
     echo "">/testfifo
     echo "">/testfifo
+    echo "">/testfifo
     echo "sqlite version: $sqlite_version $warning">/testfifo
-    echo "$hijack_status">/testfifo
+    #echo "$hijack_status">/testfifo
     echo "$update_status">/testfifo
     echo "">/testfifo
+    echo "">/testfifo
+	echo "">/testfifo
     echo "">/testfifo
     
     getbuttoninput
     
     if [ "$button_pressed" == 'VDN' ]; then
         listcarts
-    elif [ "$button_pressed" == 'VUP' ]; then
-		uninstall_hijack
+    #elif [ "$button_pressed" == 'VUP' ]; then
+	#	uninstall_hijack
     elif [ "$button_pressed" == 'HOM' ]; then
         rebootdash
-    elif [ "$button_pressed" == 'SHT' ]; then
-        install_hijack
+    #elif [ "$button_pressed" == 'SHT' ]; then
+    #    install_hijack
     elif [ "$button_pressed" == 'BRI' ]; then
-        echo "">/testfifo
         echo "SHUT DOWN">/testfifo
         sleep 2
  		rm -f $pidfile
